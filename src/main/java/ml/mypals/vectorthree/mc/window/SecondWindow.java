@@ -1,5 +1,6 @@
 package ml.mypals.vectorthree.mc.window;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
@@ -7,6 +8,7 @@ import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import ml.mypals.vectorthree.mixin.minecraft.RenderSystemAccessor;
 import net.minecraft.client.Minecraft;
 import org.joml.Vector4f;
@@ -20,18 +22,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.IntBuffer;
+import java.util.function.Consumer;
 
-/** Feasibility prototype: a second SDL window with its own surface, cleared to a solid color each frame. */
+/** A second SDL window with its own surface. The editor draws into {@link #imguiTarget()} and this presents it. */
 public final class SecondWindow {
     private static final Logger LOGGER = LoggerFactory.getLogger("vector3/second_window");
     private static final long FLAGS = 0x2020L;
 
     private static long handle;
     private static GpuSurface surface;
-    private static TextureTarget target;
+    private static TextureTarget fallback;
+    private static RenderTarget imguiTarget;
+    private static Consumer<SDL_Event> eventSink;
     private static boolean needsConfigure;
     private static boolean failed;
     private static int frames;
+    private static long lastDrawNanos;
 
     private SecondWindow() {}
 
@@ -41,6 +47,52 @@ public final class SecondWindow {
 
     public static boolean failed() {
         return failed;
+    }
+
+    public static long handle() {
+        return handle;
+    }
+
+    public static void setEventSink(Consumer<SDL_Event> sink) {
+        eventSink = sink;
+    }
+
+    public static RenderTarget imguiTarget() {
+        return imguiTarget;
+    }
+
+    public static void setImguiTarget(RenderTarget target) {
+        imguiTarget = target;
+    }
+
+    public static long nanosSinceDraw() {
+        return System.nanoTime() - lastDrawNanos;
+    }
+
+    public static int logicalWidth() {
+        return handle == 0 ? 0 : size(false, false);
+    }
+
+    public static int logicalHeight() {
+        return handle == 0 ? 0 : size(false, true);
+    }
+
+    public static int pixelWidth() {
+        return handle == 0 ? 0 : size(true, false);
+    }
+
+    public static int pixelHeight() {
+        return handle == 0 ? 0 : size(true, true);
+    }
+
+    private static int size(boolean pixels, boolean height) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer w = stack.mallocInt(1);
+            IntBuffer h = stack.mallocInt(1);
+            if (pixels) SDLVideo.SDL_GetWindowSizeInPixels(handle, w, h);
+            else SDLVideo.SDL_GetWindowSize(handle, w, h);
+            return height ? h.get(0) : w.get(0);
+        }
     }
 
     public static void open() {
@@ -100,9 +152,13 @@ public final class SecondWindow {
             }
             surface = null;
         }
-        if (target != null) {
-            target.destroyBuffers();
-            target = null;
+        if (fallback != null) {
+            fallback.destroyBuffers();
+            fallback = null;
+        }
+        if (imguiTarget != null) {
+            imguiTarget.destroyBuffers();
+            imguiTarget = null;
         }
         if (handle != 0) {
             SDLVideo.SDL_DestroyWindow(handle);
@@ -117,42 +173,41 @@ public final class SecondWindow {
         int type = event.type();
         if (type == SDLEvents.SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
             close();
-        } else if (type == SDLEvents.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || type == SDLEvents.SDL_EVENT_WINDOW_RESIZED) {
-            needsConfigure = true;
+            return true;
         }
+        if (type == SDLEvents.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || type == SDLEvents.SDL_EVENT_WINDOW_RESIZED) needsConfigure = true;
+        if (eventSink != null) eventSink.accept(event);
         return true;
     }
 
-    /** Draws and presents one frame; called once per rendered frame on the render thread. */
-    public static void frame() {
+    /** Presents the editor image, or a placeholder when there is none. Called once per rendered frame on the render thread. */
+    public static void drawFrame(RenderTarget content) {
         if (handle == 0 || surface == null) return;
         try {
-            int w;
-            int h;
-            try (MemoryStack stack = MemoryStack.stackPush()) {
-                IntBuffer pw = stack.mallocInt(1);
-                IntBuffer ph = stack.mallocInt(1);
-                SDLVideo.SDL_GetWindowSizeInPixels(handle, pw, ph);
-                w = pw.get(0);
-                h = ph.get(0);
-            }
+            int w = pixelWidth();
+            int h = pixelHeight();
             if (w <= 0 || h <= 0) return;
             if (needsConfigure || surface.currentConfiguration().isEmpty()) {
                 var mode = GpuSurface.PresentMode.getSupportedVsyncMode(surface.supportedPresentModes(), false);
                 surface.configure(new GpuSurface.Configuration(w, h, mode));
                 needsConfigure = false;
             }
-            if (target == null || target.width != w || target.height != h) {
-                if (target != null) target.destroyBuffers();
-                target = new TextureTarget("vector3_second_window", w, h, GpuFormat.RGBA8_UNORM, null);
-            }
             surface.acquireNextTexture();
             CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-            float pulse = 0.35f + 0.15f * (float) Math.sin(frames++ * 0.05);
-            encoder.clearColorTexture(target.getColorTexture(), new Vector4f(0.1f, pulse, 0.3f, 1f));
-            surface.blitFromTexture(encoder, target.getColorTextureView());
+            GpuTextureView view = content == null ? null : content.getColorTextureView();
+            if (view == null || content.width != w || content.height != h) {
+                if (fallback == null || fallback.width != w || fallback.height != h) {
+                    if (fallback != null) fallback.destroyBuffers();
+                    fallback = new TextureTarget("vector3_second_window", w, h, GpuFormat.RGBA8_UNORM, null);
+                }
+                float pulse = 0.12f + 0.03f * (float) Math.sin(frames++ * 0.05);
+                encoder.clearColorTexture(fallback.getColorTexture(), new Vector4f(0.1f, pulse, 0.14f, 1f));
+                view = fallback.getColorTextureView();
+            }
+            surface.blitFromTexture(encoder, view);
             encoder.submit();
             surface.present();
+            lastDrawNanos = System.nanoTime();
         } catch (Throwable t) {
             LOGGER.error("second window frame failed, closing", t);
             close();
