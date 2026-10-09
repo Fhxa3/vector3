@@ -31,6 +31,7 @@ public class MainMenuBarMixin {
         vector3$window();
         HelpWindow.renderMenu();
         ml.mypals.vectorthree.fb.camera.MotionPaths.renderMenu();
+        ml.mypals.vectorthree.fb.editor.DualWindow.renderMenu();
     }
 
     @Unique

@@ -20,6 +20,7 @@ import ml.mypals.vectorthree.core.shape.ShapeState;
 import ml.mypals.vectorthree.fb.shape.ShapeKeyframe;
 import ml.mypals.vectorthree.fb.shape.ShapeKeyframeType;
 import ml.mypals.vectorthree.fb.shape.ShapeReparent;
+import ml.mypals.vectorthree.mc.window.SecondWindow;
 import net.minecraft.resources.Identifier;
 import ml.mypals.vectorthree.core.port.ViewPolicy;
 import ml.mypals.vectorthree.fb.camera.CameraPreview;
@@ -40,6 +41,7 @@ public final class FlashbackPorts {
         Ports.install(new Clock(), new Viewport(), new View(), new Editing(), new SplineImpl());
         FrameHooks.beforeFrame(Editors.FOCUS_GIZMO::beforeFrame);
         FrameHooks.beforeFrame(CameraPreview::beforeFrame);
+        FrameHooks.beforeFrame(SecondWindow::frame);
     }
 
     /** The replay tick an export is at. Flashback's own counter starts at 0 on the export's first tick. */
