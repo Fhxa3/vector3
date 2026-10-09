@@ -24,7 +24,6 @@ import org.slf4j.LoggerFactory;
 import java.nio.IntBuffer;
 import java.util.function.Consumer;
 
-/** A second SDL window with its own surface. The editor draws into {@link #imguiTarget()} and this presents it. */
 public final class SecondWindow {
     private static final Logger LOGGER = LoggerFactory.getLogger("vector3/second_window");
     private static final long FLAGS = 0x2020L;
@@ -36,6 +35,7 @@ public final class SecondWindow {
     private static Consumer<SDL_Event> eventSink;
     private static boolean needsConfigure;
     private static boolean failed;
+    private static boolean stacked;
     private static int frames;
     private static long lastDrawNanos;
 
@@ -51,6 +51,10 @@ public final class SecondWindow {
 
     public static long handle() {
         return handle;
+    }
+
+    public static boolean stackedVertically() {
+        return stacked;
     }
 
     public static void setEventSink(Consumer<SDL_Event> sink) {
@@ -122,6 +126,7 @@ public final class SecondWindow {
             }
         }
         if (other == 0) throw new IllegalStateException("no second display");
+        stacked = stacked(mainDisplay, other);
 
         GpuBackend backend = RenderSystemAccessor.vector3$backend();
         if (backend == null) throw new IllegalStateException("no gpu backend");
@@ -141,6 +146,17 @@ public final class SecondWindow {
         GpuDevice device = RenderSystem.getDevice();
         surface = device.createSurface(window, () -> (SDLVideo.SDL_GetWindowFlags(window) & SDLVideo.SDL_WINDOW_MINIMIZED) != 0);
         needsConfigure = true;
+    }
+
+    private static boolean stacked(int mainDisplay, int other) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            SDL_Rect a = SDL_Rect.malloc(stack);
+            SDL_Rect b = SDL_Rect.malloc(stack);
+            if (!SDLVideo.SDL_GetDisplayBounds(mainDisplay, a) || !SDLVideo.SDL_GetDisplayBounds(other, b)) return false;
+            double dx = (b.x() + b.w() / 2.0) - (a.x() + a.w() / 2.0);
+            double dy = (b.y() + b.h() / 2.0) - (a.y() + a.h() / 2.0);
+            return Math.abs(dy) > Math.abs(dx);
+        }
     }
 
     public static void close() {
@@ -200,8 +216,8 @@ public final class SecondWindow {
                     if (fallback != null) fallback.destroyBuffers();
                     fallback = new TextureTarget("vector3_second_window", w, h, GpuFormat.RGBA8_UNORM, null);
                 }
-                float pulse = 0.12f + 0.03f * (float) Math.sin(frames++ * 0.05);
-                encoder.clearColorTexture(fallback.getColorTexture(), new Vector4f(0.1f, pulse, 0.14f, 1f));
+                //float pulse = 0.12f + 0.03f * (float) Math.sin(frames++ * 0.05);
+                encoder.clearColorTexture(fallback.getColorTexture(), new Vector4f(1f, 1f, 1f, 1f));
                 view = fallback.getColorTextureView();
             }
             surface.blitFromTexture(encoder, view);

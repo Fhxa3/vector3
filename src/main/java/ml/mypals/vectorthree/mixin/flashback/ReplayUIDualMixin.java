@@ -22,6 +22,11 @@ public class ReplayUIDualMixin {
         DualLayout.beginFrame();
     }
 
+    @Inject(method = "drawOverlayInternal", at = @At("HEAD"))
+    private static void vector3$applyLayout(CallbackInfo ci) {
+        DualLayout.applyLayout();
+    }
+
     @Inject(method = "drawOverlay", at = @At("RETURN"))
     private static void vector3$endDual(CallbackInfo ci) {
         DualLayout.endFrame();
@@ -37,7 +42,7 @@ public class ReplayUIDualMixin {
         viewport.setWorkSize(DualLayout.mainW(), Math.max(1, DualLayout.mainH() - top));
         int dock = original.call(id, viewport, flags);
         viewport.setWorkSize(fullWidth, height);
-        DualLayout.secondDock(dock, top);
+        DualLayout.secondDock(top);
         return dock;
     }
 

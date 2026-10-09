@@ -9,7 +9,6 @@ import ml.mypals.vectorthree.fb.editor.DualLayout;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
-// While one window's half of the canvas is drawn, the renderer is told the draw data is only that half.
 @Mixin(value = CustomImGuiImplB3D.class, remap = false)
 public class ImplB3DDualMixin {
     @WrapOperation(method = {"renderDrawData", "setupUniforms"}, at = @At(value = "INVOKE", target = "Limgui/moulberry90/ImDrawData;getDisplaySizeX()F"))
@@ -37,12 +36,12 @@ public class ImplB3DDualMixin {
 
     @WrapOperation(method = "setupUniforms", at = @At(value = "INVOKE", target = "Limgui/moulberry90/ImDrawData;getDisplayPosY()F"))
     private float vector3$posY(ImDrawData data, Operation<Float> original) {
-        return DualLayout.pass == 2 ? 0 : original.call(data);
+        return DualLayout.pass == 2 ? DualLayout.secondY() : original.call(data);
     }
 
     @WrapOperation(method = "renderDrawData", at = @At(value = "INVOKE", target = "Limgui/moulberry90/ImDrawData;getDisplayPos()Limgui/moulberry90/ImVec2;"))
     private ImVec2 vector3$pos(ImDrawData data, Operation<ImVec2> original) {
-        return DualLayout.pass == 2 ? new ImVec2(DualLayout.secondX(), 0) : original.call(data);
+        return DualLayout.pass == 2 ? new ImVec2(DualLayout.secondX(), DualLayout.secondY()) : original.call(data);
     }
 
     @WrapOperation(method = "renderDrawData", at = @At(value = "INVOKE", target = "Limgui/moulberry90/ImDrawData;getFramebufferScaleX()F"))
