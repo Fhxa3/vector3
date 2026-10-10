@@ -12,9 +12,11 @@ import java.util.UUID;
  * One track's pose for one entity: per model part (by the model's part names, plus {@link #ROOT}), a rotation in
  * degrees and an offset in model units (1/16 block), each switched on separately. Several tracks may pose the same
  * entity; they apply in track order, each on top of the previous, so one track can drive a part's rotation and
- * another its offset. Channels left off keep what the animation (or an earlier track) gave them.
+ * another its offset. Channels left off keep what the animation (or an earlier track) gave them. With {@code joints},
+ * the parts the model lists side by side but that are joined (see {@link PartJoints}) move along with the part they
+ * hang from.
  */
-public record EntityPose(@Nullable UUID entity, Mode mode, Map<String, Limb> parts) {
+public record EntityPose(@Nullable UUID entity, Mode mode, Map<String, Limb> parts, boolean joints) {
     public static final String ROOT = "root";
 
     public enum Mode {
@@ -60,31 +62,39 @@ public record EntityPose(@Nullable UUID entity, Mode mode, Map<String, Limb> par
         }
     }
 
+    public EntityPose(@Nullable UUID entity, Mode mode, Map<String, Limb> parts) {
+        this(entity, mode, parts, false);
+    }
+
     public EntityPose {
         parts = parts == null ? Map.of() : Map.copyOf(parts);
         if (mode == null) mode = Mode.ABSOLUTE;
     }
 
     public EntityPose withEntity(@Nullable UUID entity) {
-        return new EntityPose(entity, mode, parts);
+        return new EntityPose(entity, mode, parts, joints);
     }
 
     public EntityPose withMode(Mode mode) {
-        return new EntityPose(entity, mode, parts);
+        return new EntityPose(entity, mode, parts, joints);
+    }
+
+    public EntityPose withJoints(boolean joints) {
+        return new EntityPose(entity, mode, parts, joints);
     }
 
     public EntityPose withPart(String name, Limb limb) {
         Map<String, Limb> next = new LinkedHashMap<>(parts);
         next.put(name, limb);
-        return new EntityPose(entity, mode, next);
+        return new EntityPose(entity, mode, next, joints);
     }
 
     public EntityPose withParts(Map<String, Limb> parts) {
-        return new EntityPose(entity, mode, parts);
+        return new EntityPose(entity, mode, parts, joints);
     }
 
     public EntityPose lerp(EntityPose to, float amount) {
-        if (!Objects.equals(entity, to.entity) || mode != to.mode) return amount < 0.5f ? this : to;
+        if (!Objects.equals(entity, to.entity) || mode != to.mode || joints != to.joints) return amount < 0.5f ? this : to;
         Map<String, Limb> blended = new LinkedHashMap<>();
         for (Map.Entry<String, Limb> entry : parts.entrySet()) {
             Limb other = to.parts.getOrDefault(entry.getKey(), Limb.NONE);
@@ -94,6 +104,6 @@ public record EntityPose(@Nullable UUID entity, Mode mode, Map<String, Limb> par
         for (Map.Entry<String, Limb> entry : to.parts.entrySet()) {
             if (!blended.containsKey(entry.getKey()) && entry.getValue().active()) blended.put(entry.getKey(), entry.getValue());
         }
-        return new EntityPose(entity, mode, blended);
+        return new EntityPose(entity, mode, blended, joints);
     }
 }

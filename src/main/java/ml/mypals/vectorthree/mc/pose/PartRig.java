@@ -10,9 +10,18 @@ import java.util.Map;
 
 /** A posable model seen as a tree of named parts, whatever it is made of (vanilla model parts, GeckoLib bones). */
 public interface PartRig {
+    /** The parts as the model nests them. */
     PartTree tree();
 
-    /** Writes each enabled channel of the pose's parts into the model. */
+    /** The parts with the joints between those the model lists side by side (see {@link ml.mypals.vectorthree.core.pose.PartJoints}). */
+    default PartTree jointTree() {
+        return tree();
+    }
+
+    /** The model was just set up again: forget what earlier poses did to it. */
+    default void begin() {}
+
+    /** Writes each enabled channel of the pose's parts into the model; with the pose's joints on, joined parts follow. */
     void apply(EntityPose pose);
 
     /** The model's pose as absolute limbs: every rotation, and the offsets of parts moved from their rest position. */

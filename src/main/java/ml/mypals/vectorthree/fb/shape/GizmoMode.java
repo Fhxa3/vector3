@@ -30,7 +30,8 @@ public enum GizmoMode {
         boolean rotate = pressed(InputConstants.KEY_R);
         boolean geometry = pressed(InputConstants.KEY_M);
         pressedNow = null;
-        if (blocked || ImGui.getIO().getWantTextInput() || ImGui.isAnyItemActive()) return;
+        // A widget left active (a panel's tree row, a drag released elsewhere) must not take the keys from a mouse over the viewport.
+        if (blocked || ImGui.getIO().getWantTextInput() || ImGui.isAnyItemActive() && !ShapeGizmoEditor.mouseInViewport()) return;
         GizmoMode requested = move ? MOVE : scale ? SCALE : rotate ? ROTATE : geometry ? GEOMETRY : null;
         pressedNow = requested;
         if (requested != null) current = requested;

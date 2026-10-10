@@ -60,11 +60,15 @@ public final class EntityPoses {
     private record Preview(EntityPose original, EntityPose replacement) {}
 
     /**
-     * Where a part sits this frame: its pivot and the world axes its X / Y / Z rotations turn about.
-     * {@code moveX..Z}: the world displacement of one unit of offset; {@code x..z}: the part's offset from rest.
+     * Where a part sits this frame: its pivot, and the world axes of its parent's space (a rotation of the part is
+     * a turn about one of them, and the three stand square to each other).
+     * {@code moveX..Z}: the world displacement of one unit of offset; {@code x..z}, {@code xRot..zRot}: the part's own
+     * offset from rest and rotation, without what a joint carries to it, which is {@code carry}, a turn of the part
+     * on top of those; {@code baseXRot..} is what the model turns the part by before its rotation.
      */
     public record Frame(Vec3 pivot, Vec3 xAxis, Vec3 yAxis, Vec3 zAxis, boolean mirrored, float xRot, float yRot, float zRot,
-                        Vec3 moveX, Vec3 moveY, Vec3 moveZ, float x, float y, float z) {}
+                        Vec3 moveX, Vec3 moveY, Vec3 moveZ, float x, float y, float z,
+                        Quaternionf carry, float baseXRot, float baseYRot, float baseZRot) {}
 
     private static volatile @Nullable UUID watched;
     private static volatile Map<String, Frame> watchedFrames = Map.of();
@@ -92,16 +96,14 @@ public final class EntityPoses {
      */
     public static Frame frame(Matrix4f parentMatrix, Vector3f pivot, float[] rotation, float[] offset, Vec3 camera) {
         Vector3f at = parentMatrix.transformPosition(new Vector3f(pivot));
-        Quaternionf z = new Quaternionf().rotationZ(rotation[2] * Mth.DEG_TO_RAD);
-        Quaternionf zy = new Quaternionf(z).rotateY(rotation[1] * Mth.DEG_TO_RAD);
         return new Frame(new Vec3(at.x + camera.x, at.y + camera.y, at.z + camera.z),
-                worldAxis(parentMatrix, zy.transform(new Vector3f(1, 0, 0))),
-                worldAxis(parentMatrix, z.transform(new Vector3f(0, 1, 0))),
+                worldAxis(parentMatrix, new Vector3f(1, 0, 0)),
+                worldAxis(parentMatrix, new Vector3f(0, 1, 0)),
                 worldAxis(parentMatrix, new Vector3f(0, 0, 1)),
                 parentMatrix.determinant3x3() < 0,
                 rotation[0], rotation[1], rotation[2],
                 worldStep(parentMatrix, 16, 0, 0), worldStep(parentMatrix, 0, 16, 0), worldStep(parentMatrix, 0, 0, 16),
-                offset[0], offset[1], offset[2]);
+                offset[0], offset[1], offset[2], new Quaternionf(), 0, 0, 0);
     }
 
     public static Map<String, Frame> watchedFrames() {
@@ -198,6 +200,7 @@ public final class EntityPoses {
     public static void afterSetupAnim(PartRig rig, Object state, boolean snapshot) {
         if (!(state instanceof Holder holder) || holder.vector3$poseEntity() == null) return;
         UUID entity = holder.vector3$poseEntity();
+        rig.begin();
         if (snapshot && snapshotRequests.remove(entity)) snapshots.put(entity, rig.read());
         for (EntityPose pose : holder.vector3$poses()) rig.apply(pose);
     }
@@ -337,8 +340,13 @@ public final class EntityPoses {
 
     /** How the entity's model parts hang from one another, or an empty tree when it has no posable model. */
     public static PartTree tree(@Nullable Entity entity) {
+        return tree(entity, false);
+    }
+
+    /** As {@link #tree(Entity)}, with {@code joints} the parts the model lists side by side but that are joined hang together too. */
+    public static PartTree tree(@Nullable Entity entity, boolean joints) {
         PartRig rig = rig(entity);
-        return rig == null ? PartTree.EMPTY : rig.tree();
+        return rig == null ? PartTree.EMPTY : joints ? rig.jointTree() : rig.tree();
     }
 
     static @Nullable PartRig rig(@Nullable Entity entity) {

@@ -115,17 +115,16 @@ final class GeckoPartRig implements PartRig {
             float rx = s == null ? 0 : s.getRotX(), ry = s == null ? 0 : s.getRotY(), rz = s == null ? 0 : s.getRotZ();
             Vector3f pivot = parent.transformPosition(new Vector3f((bone.pivotX() - tx) / 16f, (bone.pivotY() + ty) / 16f,
                     (bone.pivotZ() + tz) / 16f));
-            Quaternionf z = new Quaternionf().rotationZ(bone.baseRotZ() + rz);
-            Quaternionf zy = new Quaternionf(z).rotateY(bone.baseRotY() + ry);
             frames.put(name, new EntityPoses.Frame(new Vec3(pivot.x + camera.x, pivot.y + camera.y, pivot.z + camera.z),
-                    EntityPoses.worldAxis(parent, zy.transform(new Vector3f(1, 0, 0))),
-                    EntityPoses.worldAxis(parent, z.transform(new Vector3f(0, 1, 0))),
+                    EntityPoses.worldAxis(parent, new Vector3f(1, 0, 0)),
+                    EntityPoses.worldAxis(parent, new Vector3f(0, 1, 0)),
                     EntityPoses.worldAxis(parent, new Vector3f(0, 0, 1)),
                     parent.determinant3x3() < 0,
                     rx * Mth.RAD_TO_DEG, ry * Mth.RAD_TO_DEG, rz * Mth.RAD_TO_DEG,
                     EntityPoses.worldStep(parent, -1, 0, 0), EntityPoses.worldStep(parent, 0, 1, 0),
                     EntityPoses.worldStep(parent, 0, 0, 1),
-                    tx, ty, tz));
+                    tx, ty, tz, new Quaternionf(), bone.baseRotX() * Mth.RAD_TO_DEG, bone.baseRotY() * Mth.RAD_TO_DEG,
+                    bone.baseRotZ() * Mth.RAD_TO_DEG));
         });
         return frames;
     }

@@ -93,4 +93,38 @@ class PartTreeTest {
         assertEquals(List.of(), tree.children("head"));
         assertEquals(List.of(), tree.descendants("head"));
     }
+
+    @Test
+    void withParentsKeepsNamesAndRehangs() {
+        PartTree.Builder b = PartTree.builder();
+        int root = b.add("root", -1);
+        b.add("body", root);
+        b.add("head", root);
+        b.add("hat", root);
+        PartTree tree = b.build();
+        PartTree joined = tree.withParents(java.util.Map.of("head", "body", "hat", "head"));
+
+        assertEquals("body", joined.parent("head"));
+        assertEquals("head", joined.parent("hat"));
+        assertEquals(List.of("root", "body", "head", "hat"), joined.names());
+        assertEquals(List.of("root", "body", "head"), joined.ancestors("hat"));
+        assertEquals("root", tree.parent("hat"));
+    }
+
+    @Test
+    void withParentsIgnoresCyclesAndUnknownParts() {
+        PartTree.Builder b = PartTree.builder();
+        int root = b.add("root", -1);
+        b.add("a", root);
+        b.add("b", root);
+        java.util.Map<String, String> links = new java.util.LinkedHashMap<>();
+        links.put("a", "b");
+        links.put("b", "a");
+        links.put("c", "a");
+        links.put("b", "zzz");
+        PartTree joined = b.build().withParents(links);
+
+        assertEquals("b", joined.parent("a"));
+        assertEquals("root", joined.parent("b"));
+    }
 }
