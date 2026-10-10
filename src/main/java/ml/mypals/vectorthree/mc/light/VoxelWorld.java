@@ -86,6 +86,13 @@ public final class VoxelWorld {
         DIRTY_COLUMNS.add(VoxelLayout.key(chunkX, 0, chunkZ));
     }
 
+    /** Whether a world position is inside the copied window. */
+    public static boolean contains(Vec3 position) {
+        double x = position.x - minX * 16.0, y = position.y - minY * 16.0, z = position.z - minZ * 16.0;
+        return x >= 0 && y >= 0 && z >= 0 && x < VoxelLayout.GX * 16 && y < VoxelLayout.GY * 16
+                && z < VoxelLayout.GZ * 16;
+    }
+
     public static GpuBuffer tags() { return tagBuffer; }
     public static GpuBuffer bits() { return bitBuffer; }
     public static GpuBuffer boxes() { return boxBuffer; }

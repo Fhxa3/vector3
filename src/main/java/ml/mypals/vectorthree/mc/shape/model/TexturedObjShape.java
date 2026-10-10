@@ -24,6 +24,7 @@ import ml.mypals.ryansrenderingkit.shape.basics.tags.EmptyMesh;
 import ml.mypals.ryansrenderingkit.shape.model.ObjModelShape;
 import ml.mypals.ryansrenderingkit.transform.shapeTransformers.DefaultTransformer;
 import ml.mypals.vectorthree.core.pose.EntityPose;
+import ml.mypals.vectorthree.core.pose.PartTree;
 import ml.mypals.vectorthree.mc.camera.PreviewPass;
 import ml.mypals.vectorthree.mc.compat.IrisCompat;
 import ml.mypals.vectorthree.mc.pose.EntityPoses;
@@ -162,6 +163,12 @@ public final class TexturedObjShape extends ObjModelShape implements EmptyMesh {
 
     public List<String> partNames() {
         return model.parts.stream().map(ObjModel.Part::name).toList();
+    }
+
+    public PartTree partTree() {
+        PartTree.Builder builder = PartTree.builder();
+        for (ObjModel.Part part : model.parts) builder.add(part.name(), part.parent());
+        return builder.build();
     }
 
     /** The part's pivot: the override if there is one, else the centre of its faces. */

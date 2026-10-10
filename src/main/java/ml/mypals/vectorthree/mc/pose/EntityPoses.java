@@ -1,21 +1,18 @@
 package ml.mypals.vectorthree.mc.pose;
 
 import ml.mypals.vectorthree.core.pose.EntityPose;
+import ml.mypals.vectorthree.core.pose.PartTree;
 
 import ml.mypals.vectorthree.mc.camera.PreviewPass;
 import ml.mypals.vectorthree.mc.compat.IrisCompat;
-import ml.mypals.vectorthree.mixin.minecraft.pose.ModelPartAccessor;
 import ml.mypals.vectorthree.mc.render.ScreenLayer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.Model;
-import net.minecraft.client.model.geom.ModelPart;
-import net.minecraft.client.model.geom.PartPose;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import org.jetbrains.annotations.Nullable;
-import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -25,7 +22,6 @@ import java.util.List;
 
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -57,14 +53,11 @@ public final class EntityPoses {
     private static Map<UUID, List<EntityPose>> current = Map.of();
     private static final Set<UUID> snapshotRequests = new HashSet<>();
     private static final Map<UUID, Map<String, EntityPose.Limb>> snapshots = new HashMap<>();
-    private static final Map<Model<?>, Tree> PARTS = new WeakHashMap<>();
+    private static final Map<Model<?>, PartRig> RIGS = new WeakHashMap<>();
     private static final Map<UUID, Preview> previews = new HashMap<>();
 
     /** {@code replacement} shown in place of the track pose {@code original} (by identity), or on top if absent. */
     private record Preview(EntityPose original, EntityPose replacement) {}
-
-    /** A model's parts by name (first wins), and each part's parent. */
-    record Tree(Map<String, ModelPart> byName, Map<ModelPart, ModelPart> parents) {}
 
     /**
      * Where a part sits this frame: its pivot and the world axes its X / Y / Z rotations turn about.
@@ -137,6 +130,7 @@ public final class EntityPoses {
         snapshotRequests.clear();
         snapshots.clear();
         MODEL_MATRICES.clear();
+        DRAWN_RIGS.clear();
         submission = null;
     }
 
@@ -197,44 +191,15 @@ public final class EntityPoses {
     /** Called right after a model's setupAnim with the render state it was given; {@code snapshot} allows taking a requested snapshot first. */
     public static void afterSetupAnim(Model<?> model, Object state, boolean snapshot) {
         if (!(state instanceof Holder holder) || holder.vector3$poseEntity() == null) return;
+        afterSetupAnim(rig(model), state, snapshot);
+    }
+
+    /** As above for any posable model, once its rig is known. */
+    public static void afterSetupAnim(PartRig rig, Object state, boolean snapshot) {
+        if (!(state instanceof Holder holder) || holder.vector3$poseEntity() == null) return;
         UUID entity = holder.vector3$poseEntity();
-        if (snapshot && snapshotRequests.remove(entity)) snapshots.put(entity, read(model));
-        for (EntityPose pose : holder.vector3$poses()) apply(model, pose);
-    }
-
-    private static void apply(Model<?> model, EntityPose pose) {
-        Map<String, ModelPart> parts = parts(model).byName();
-        boolean absolute = pose.mode() == EntityPose.Mode.ABSOLUTE;
-        for (Map.Entry<String, EntityPose.Limb> entry : pose.parts().entrySet()) {
-            EntityPose.Limb limb = entry.getValue();
-            ModelPart part = parts.get(entry.getKey());
-            if (part == null) continue;
-            if (limb.rotate()) {
-                float xRot = limb.xRot() * Mth.DEG_TO_RAD, yRot = limb.yRot() * Mth.DEG_TO_RAD, zRot = limb.zRot() * Mth.DEG_TO_RAD;
-                part.xRot = absolute ? xRot : part.xRot + xRot;
-                part.yRot = absolute ? yRot : part.yRot + yRot;
-                part.zRot = absolute ? zRot : part.zRot + zRot;
-            }
-            if (limb.move()) {
-                PartPose rest = part.getInitialPose();
-                part.x = (absolute ? rest.x() : part.x) + limb.x();
-                part.y = (absolute ? rest.y() : part.y) + limb.y();
-                part.z = (absolute ? rest.z() : part.z) + limb.z();
-            }
-        }
-    }
-
-    /** The model's pose as absolute limbs: every rotation, and the offsets of parts moved from their rest position. */
-    private static Map<String, EntityPose.Limb> read(Model<?> model) {
-        Map<String, EntityPose.Limb> limbs = new LinkedHashMap<>();
-        parts(model).byName().forEach((name, part) -> {
-            PartPose rest = part.getInitialPose();
-            float x = part.x - rest.x(), y = part.y - rest.y(), z = part.z - rest.z();
-            boolean moved = Math.abs(x) > 1.0e-4f || Math.abs(y) > 1.0e-4f || Math.abs(z) > 1.0e-4f;
-            limbs.put(name, new EntityPose.Limb(true, moved, part.xRot * Mth.RAD_TO_DEG, part.yRot * Mth.RAD_TO_DEG,
-                    part.zRot * Mth.RAD_TO_DEG, x, y, z));
-        });
-        return limbs;
+        if (snapshot && snapshotRequests.remove(entity)) snapshots.put(entity, rig.read());
+        for (EntityPose pose : holder.vector3$poses()) rig.apply(pose);
     }
 
     /** Asks for the entity's animated pose on its next frame; poll with {@link #takeSnapshot}. */
@@ -269,6 +234,7 @@ public final class EntityPoses {
 
     private static final Map<EntityRenderer<?, ?>, Model<?>> RENDERER_MODELS = new WeakHashMap<>();
     private static final Map<UUID, Matrix4f> MODEL_MATRICES = new HashMap<>();
+    private static final Map<UUID, PartRig> DRAWN_RIGS = new HashMap<>();
     private static @Nullable Submission submission;
 
     /** {@code origin}: the pose at the entity's position (camera-relative), before its renderer adds anything. */
@@ -294,6 +260,36 @@ public final class EntityPoses {
                 || IrisCompat.isRenderingShadowPass() || ScreenLayer.isRendering()) return;
         MODEL_MATRICES.put(holder.vector3$poseEntity(), current.inverseOrigin.mul(pose, new Matrix4f()));
         beforeSubmit(model, state, pose, current.camera);
+    }
+
+    /** How an entity is being dispatched, for a rig whose bones are only set up when the draw runs (GeckoLib's). */
+    public record Draw(Matrix4f inverseOrigin, Vec3 camera, boolean main) {}
+
+    /** The dispatch {@code state} is part of right now, or null if it is not the entity being submitted. */
+    public static @Nullable Draw drawing(Object state) {
+        Submission current = submission;
+        if (current == null || current.state != state) return null;
+        boolean main = !PreviewPass.isRendering() && !IrisCompat.isRenderingShadowPass() && !ScreenLayer.isRendering();
+        return new Draw(current.inverseOrigin, current.camera, main);
+    }
+
+    /**
+     * Called when {@code rig}'s bones are set up for a draw, with the matrix of the model that is drawn: applies the
+     * entity's poses, and reports the rig to the gizmo, pending snapshots and part mounts.
+     */
+    public static void rigPosed(PartRig rig, Object state, @Nullable Draw draw, Matrix4f pose) {
+        boolean main = draw != null && draw.main();
+        afterSetupAnim(rig, state, main);
+        if (!main || !(state instanceof Holder holder) || holder.vector3$poseEntity() == null) return;
+        UUID entity = holder.vector3$poseEntity();
+        DRAWN_RIGS.put(entity, rig);
+        MODEL_MATRICES.put(entity, draw.inverseOrigin().mul(pose, new Matrix4f()));
+        if (entity.equals(watched)) watchedFrames = rig.frames(new Matrix4f(pose), draw.camera());
+    }
+
+    /** The rig last drawn for the entity, if it is not a vanilla model. */
+    static @Nullable PartRig drawnRig(UUID entity) {
+        return DRAWN_RIGS.get(entity);
     }
 
     /** The model {@code renderer} submitted last, and its matrix relative to {@code entity} the last time it was drawn. */
@@ -335,16 +331,20 @@ public final class EntityPoses {
 
     /** The entity's model parts at rest (disabled), root first, or an empty map when it has no posable model. */
     public static Map<String, EntityPose.Limb> restPose(@Nullable Entity entity) {
-        if (entity == null) return Map.of();
+        PartRig rig = rig(entity);
+        return rig == null ? Map.of() : rig.rest();
+    }
+
+    /** How the entity's model parts hang from one another, or an empty tree when it has no posable model. */
+    public static PartTree tree(@Nullable Entity entity) {
+        PartRig rig = rig(entity);
+        return rig == null ? PartTree.EMPTY : rig.tree();
+    }
+
+    static @Nullable PartRig rig(@Nullable Entity entity) {
+        if (entity == null) return null;
         Model<?> model = model(Minecraft.getInstance().getEntityRenderDispatcher().getRenderer(entity));
-        if (model == null) return Map.of();
-        Map<String, EntityPose.Limb> limbs = new LinkedHashMap<>();
-        parts(model).byName().forEach((name, part) -> {
-            PartPose rest = part.getInitialPose();
-            limbs.put(name, new EntityPose.Limb(false, false, rest.xRot() * Mth.RAD_TO_DEG, rest.yRot() * Mth.RAD_TO_DEG,
-                    rest.zRot() * Mth.RAD_TO_DEG, 0, 0, 0));
-        });
-        return limbs;
+        return model == null ? DRAWN_RIGS.get(entity.getUUID()) : rig(model);
     }
 
     /**
@@ -352,58 +352,21 @@ public final class EntityPoses {
      * camera-relative world, as LivingEntityRenderer submits it) from a camera at {@code camera}.
      */
     public static Map<String, Frame> frames(Model<?> model, Matrix4f entityMatrix, Vec3 camera) {
-        Tree tree = parts(model);
-        Map<String, Frame> frames = new LinkedHashMap<>();
-        tree.byName().forEach((name, part) -> {
-            List<ModelPart> chain = new ArrayList<>();
-            for (ModelPart parent = tree.parents().get(part); parent != null; parent = tree.parents().get(parent)) {
-                chain.addFirst(parent);
-            }
-            PoseStack stack = new PoseStack();
-            stack.last().pose().set(entityMatrix);
-            for (ModelPart parent : chain) parent.translateAndRotate(stack);
-            Matrix4f parentMatrix = stack.last().pose();
-            Vector3f pivot = parentMatrix.transformPosition(new Vector3f(part.x / 16f, part.y / 16f, part.z / 16f));
-            Quaternionf z = new Quaternionf().rotationZ(part.zRot);
-            Quaternionf zy = new Quaternionf(z).rotateY(part.yRot);
-            PartPose rest = part.getInitialPose();
-            frames.put(name, new Frame(new Vec3(pivot.x + camera.x, pivot.y + camera.y, pivot.z + camera.z),
-                    worldAxis(parentMatrix, zy.transform(new Vector3f(1, 0, 0))),
-                    worldAxis(parentMatrix, z.transform(new Vector3f(0, 1, 0))),
-                    worldAxis(parentMatrix, new Vector3f(0, 0, 1)),
-                    parentMatrix.determinant3x3() < 0,
-                    part.xRot * Mth.RAD_TO_DEG, part.yRot * Mth.RAD_TO_DEG, part.zRot * Mth.RAD_TO_DEG,
-                    worldStep(parentMatrix, 1, 0, 0), worldStep(parentMatrix, 0, 1, 0), worldStep(parentMatrix, 0, 0, 1),
-                    part.x - rest.x(), part.y - rest.y(), part.z - rest.z()));
-        });
-        return frames;
+        return rig(model).frames(entityMatrix, camera);
     }
 
-    private static Vec3 worldStep(Matrix4f matrix, float x, float y, float z) {
+    public static Vec3 worldStep(Matrix4f matrix, float x, float y, float z) {
         Vector3f world = matrix.transformDirection(new Vector3f(x / 16f, y / 16f, z / 16f));
         return new Vec3(world.x, world.y, world.z);
     }
 
-    private static Vec3 worldAxis(Matrix4f matrix, Vector3f local) {
+    public static Vec3 worldAxis(Matrix4f matrix, Vector3f local) {
         Vector3f world = matrix.transformDirection(local).normalize();
         return new Vec3(world.x, world.y, world.z);
     }
 
-    // Part names are looked up through the whole tree once per model; the first part with a name wins.
-    static Tree parts(Model<?> model) {
-        return PARTS.computeIfAbsent(model, m -> {
-            Tree tree = new Tree(new LinkedHashMap<>(), new java.util.IdentityHashMap<>());
-            tree.byName().put(EntityPose.ROOT, m.root());
-            collect(m.root(), tree);
-            return tree;
-        });
-    }
-
-    private static void collect(ModelPart part, Tree tree) {
-        ((ModelPartAccessor) (Object) part).vector3$children().forEach((name, child) -> {
-            tree.byName().putIfAbsent(name, child);
-            tree.parents().put(child, part);
-            collect(child, tree);
-        });
+    // The tree of parts is worked out once per model.
+    static PartRig rig(Model<?> model) {
+        return RIGS.computeIfAbsent(model, VanillaPartRig::new);
     }
 }

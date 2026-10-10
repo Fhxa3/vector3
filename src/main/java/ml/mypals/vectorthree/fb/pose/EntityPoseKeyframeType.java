@@ -1,9 +1,9 @@
 package ml.mypals.vectorthree.fb.pose;
 
 import ml.mypals.vectorthree.core.pose.EntityPose;
+import ml.mypals.vectorthree.core.pose.PartTree;
 import ml.mypals.vectorthree.mc.pose.EntityPoses;
 
-import ml.mypals.vectorthree.fb.Editors;
 import ml.mypals.vectorthree.mc.shape.entity.ShapeEntities;
 import ml.mypals.vectorthree.mc.shape.model.TexturedObjShape;
 import com.moulberry.flashback.keyframe.handler.KeyframeHandler;
@@ -12,7 +12,6 @@ import imgui.moulberry90.type.ImInt;
 import ml.mypals.vectorthree.fb.editor.EntityPicker;
 import ml.mypals.vectorthree.fb.editor.VectorIcons;
 import ml.mypals.vectorthree.fb.custom.CustomKeyframeType;
-import ml.mypals.vectorthree.fb.channel.ChannelRows;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.language.I18n;
 import net.minecraft.locale.Language;
@@ -77,65 +76,12 @@ public final class EntityPoseKeyframeType extends CustomKeyframeType<EntityPose>
             }
         }
 
-        // The entity's own parts when it is loaded; otherwise whatever the keyframe already has.
-        Map<String, EntityPose.Limb> rows = new LinkedHashMap<>(rest);
-        edited.parts().forEach(rows::put);
-        if (rows.isEmpty()) {
+        PartTree tree = obj != null ? obj.partTree() : EntityPoses.tree(entity);
+        if (tree.size() == 0 && edited.parts().isEmpty()) {
             ImGui.textDisabled(I18n.get("vector3.entity_pose.no_parts"));
             return edited;
         }
-        boolean additive = edited.mode() == EntityPose.Mode.ADDITIVE;
-        for (Map.Entry<String, EntityPose.Limb> row : rows.entrySet()) {
-            String name = row.getKey();
-            EntityPose.Limb limb = edited.parts().getOrDefault(name, EntityPose.Limb.NONE);
-            ImGui.pushID(name);
-            // Picks the part for the viewport gizmo.
-            if (ImGui.radioButton("##gizmo", name.equals(Editors.POSE_GIZMO.part()))) Editors.POSE_GIZMO.focus(name);
-            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("vector3.entity_pose.gizmo_part"));
-            ImGui.sameLine();
-            if (limb.active()) ImGui.text(label(name));
-            else ImGui.textDisabled(label(name));
-            ImGui.indent();
-
-            // Rotation and offset switch on separately, so another track can drive the channel left off here.
-            if (ImGui.checkbox("##rotate", limb.rotate())) {
-                // A part new to this keyframe starts at rest (or at zero when adding on top); otherwise the values stay.
-                EntityPose.Limb atRest = row.getValue();
-                EntityPose.Limb start = edited.parts().containsKey(name) ? limb
-                        : additive ? limb.withRotation(0, 0, 0) : limb.withRotation(atRest.xRot(), atRest.yRot(), atRest.zRot());
-                limb = start.withRotate(!limb.rotate());
-                edited = edited.withPart(name, limb);
-            }
-            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("vector3.entity_pose.rotate.tooltip"));
-            ImGui.sameLine();
-            float[] rotation = {limb.xRot(), limb.yRot(), limb.zRot()};
-            ImGui.beginDisabled(!limb.rotate());
-            if (ImGui.dragFloat3(I18n.get("vector3.entity_pose.rotation"), rotation, 0.5f)) {
-                limb = limb.withRotation(rotation[0], rotation[1], rotation[2]);
-                edited = edited.withPart(name, limb);
-            }
-            ChannelRows.mark(name + ":rotate");
-            ImGui.endDisabled();
-
-            if (ImGui.checkbox("##move", limb.move())) {
-                limb = limb.withMove(!limb.move());
-                edited = edited.withPart(name, limb);
-            }
-            if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("vector3.entity_pose.move.tooltip"));
-            ImGui.sameLine();
-            float[] offset = {limb.x(), limb.y(), limb.z()};
-            ImGui.beginDisabled(!limb.move());
-            if (ImGui.dragFloat3(I18n.get("vector3.entity_pose.offset"), offset, 0.05f)) {
-                limb = limb.withOffset(offset[0], offset[1], offset[2]);
-                edited = edited.withPart(name, limb);
-            }
-            ChannelRows.mark(name + ":move");
-            ImGui.endDisabled();
-
-            ImGui.unindent();
-            ImGui.popID();
-        }
-        return edited;
+        return PartTreeEditor.render(edited, tree, rest);
     }
 
     // "right_hind_leg" -> "Right Hind Leg"; the common part names are translated.

@@ -32,10 +32,11 @@ public final class LightRenderer {
     private static final List<Light> PENDING = new ArrayList<>();
     private static List<Light> current = List.of();
     private static Light previewOriginal, previewReplacement;
+    private static final int MAP_SIZE = 256;
     private static RenderPipeline surfacePipeline, surfaceCompositePipeline, shadowPipeline, shadowBlurPipeline,
-            volumePipeline, volumeCompositePipeline;
+            volumePipeline, volumeCompositePipeline, visibilityPipeline;
     private static GpuBuffer settings, blurAcross, blurDown;
-    private static RenderTarget surfaceTarget, shadowTarget, shadowBlurTarget, volumeTarget;
+    private static RenderTarget surfaceTarget, shadowTarget, shadowBlurTarget, volumeTarget, visibilityTarget;
 
     private LightRenderer() {}
 
@@ -80,6 +81,10 @@ public final class LightRenderer {
             volumeTarget.destroyBuffers();
             volumeTarget = null;
         }
+        if (visibilityTarget != null) {
+            visibilityTarget.destroyBuffers();
+            visibilityTarget = null;
+        }
     }
     public static boolean hasLights() { return !current.isEmpty(); }
 
@@ -95,6 +100,8 @@ public final class LightRenderer {
         ensure();
         ensureSurface(main);
         ensureShadow(main);
+        if (visibilityTarget == null) visibilityTarget = new TextureTarget("vector3_light_visibility", MAP_SIZE,
+                MAP_SIZE, GpuFormat.RGBA16_FLOAT, null);
         RenderTarget scene = ScreenPass.scratch(main);
         ScreenPass.copy(main, scene);
         RenderSystem.getDevice().createCommandEncoder().clearColorTexture(
@@ -123,6 +130,9 @@ public final class LightRenderer {
         for (Light requested : current) {
             Light light = shown(requested);
             if (light == null || light.intensity() <= 0 || light.radius() <= 0) continue;
+            // Point and spot lights' haze looks its shadows up in a map baked from the voxel copy.
+            boolean visibilityMap = voxelReady && light.volume() > 0 && light.shadow() > 0
+                    && light.type() != Light.Type.AREA && VoxelWorld.contains(light.position());
             Vector3f offset = new Vector3f((float) (light.position().x - camera.position().x),
                     (float) (light.position().y - camera.position().y),
                     (float) (light.position().z - camera.position().z));
@@ -174,7 +184,7 @@ public final class LightRenderer {
                         .putVec4(worldOf.m02(), worldOf.m12(), worldOf.m22(), 0)
                         // The voxel window: the camera inside it, its corner and wrap offsets, and its size.
                         .putVec4(origin.x, origin.y, origin.z, voxelReady ? 1 : 0)
-                        .putIVec4(VoxelWorld.minX(), VoxelWorld.minY(), VoxelWorld.minZ(), 0)
+                        .putIVec4(VoxelWorld.minX(), VoxelWorld.minY(), VoxelWorld.minZ(), visibilityMap ? 1 : 0)
                         .putIVec4(Math.floorMod(VoxelWorld.minX(), VoxelLayout.GX),
                                 Math.floorMod(VoxelWorld.minY(), VoxelLayout.GY),
                                 Math.floorMod(VoxelWorld.minZ(), VoxelLayout.GZ), 0)
@@ -210,12 +220,14 @@ public final class LightRenderer {
                 pass.setUniform("LightSettings", settings);
                 pass.draw(3, 1, 0, 0);
             }
+            if (visibilityMap) bakeVisibility();
             if (light.volume() > 0) {
                 try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                         () -> "vector3_light_volume", volumeTarget.getColorTextureView(), Optional.empty())) {
                     pass.setPipeline(RenderSystem.getCompiledPipeline(volumePipeline));
                     RenderSystem.bindDefaultUniforms(pass);
                     pass.setUniform("DistanceSampler", DepthOfFieldEffect.distanceView(), ScreenPass.nearest());
+                    pass.setUniform("VisibilitySampler", visibilityTarget.getColorTextureView(), ScreenPass.nearest());
                     pass.setUniform("VoxelTags", VoxelWorld.tags());
                     pass.setUniform("VoxelBits", VoxelWorld.bits());
                     pass.setUniform("VoxelBoxes", VoxelWorld.boxes());
@@ -243,6 +255,20 @@ public final class LightRenderer {
                 pass.setUniform("DistanceSampler", DepthOfFieldEffect.distanceView(), ScreenPass.nearest());
                 pass.draw(3, 1, 0, 0);
             }
+        }
+    }
+
+    // The distance to the first occluder in every direction from the light, traced through the voxel copy.
+    private static void bakeVisibility() {
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "vector3_light_visibility", visibilityTarget.getColorTextureView(), Optional.empty())) {
+            pass.setPipeline(RenderSystem.getCompiledPipeline(visibilityPipeline));
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("VoxelTags", VoxelWorld.tags());
+            pass.setUniform("VoxelBits", VoxelWorld.bits());
+            pass.setUniform("VoxelBoxes", VoxelWorld.boxes());
+            pass.setUniform("LightSettings", settings);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -297,8 +323,15 @@ public final class LightRenderer {
                 GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 16);
         blurDown = RenderSystem.getDevice().createBuffer(() -> "vector3_light_shadow_blur_down",
                 GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 16);
+        visibilityPipeline = ScreenPass.pipeline("light_visibility", BindGroupLayout.builder()
+                .withUniform("VoxelTags", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBits", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBoxes", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_FLOAT)
+                .withUniform("LightSettings", UniformType.UNIFORM_BUFFER).build(),
+                GpuFormat.RGBA16_FLOAT, null);
         volumePipeline = ScreenPass.pipeline("light_volume", BindGroupLayout.builder()
                 .withUniform("DistanceSampler", UniformType.COMBINED_IMAGE_SAMPLER)
+                .withUniform("VisibilitySampler", UniformType.COMBINED_IMAGE_SAMPLER)
                 .withUniform("VoxelTags", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
                 .withUniform("VoxelBits", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
                 .withUniform("VoxelBoxes", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_FLOAT)

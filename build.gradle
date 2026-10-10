@@ -46,6 +46,8 @@ dependencies {
 	implementation "maven.modrinth:AANobbMI:v4PSXean"
 	//Iris
 	implementation "maven.modrinth:YL57xq9U:bAdKrpw8"
+	//GeckoLib (optional at runtime)
+	compileOnly "maven.modrinth:8BmcQJ2H:kSxHvs99"
 
 	testImplementation platform("org.junit:junit-bom:5.13.4")
 	testImplementation "org.junit.jupiter:junit-jupiter"
