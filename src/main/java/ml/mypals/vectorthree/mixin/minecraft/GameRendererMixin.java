@@ -8,6 +8,7 @@ import ml.mypals.vectorthree.mc.vfx.ScreenVFXRenderer;
 import ml.mypals.vectorthree.mc.render.ScreenLayer;
 import ml.mypals.vectorthree.mc.shape.particle.ParticleEmitters;
 import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -31,8 +32,9 @@ public class GameRendererMixin {
 
     @Inject(method = "renderLevel", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/GameRenderer;render3dHud(Lnet/minecraft/client/renderer/state/level/CameraRenderState;Lnet/minecraft/client/renderer/state/level/PlayerRenderState;Lnet/minecraft/client/renderer/state/OptionsRenderState;Z)V"))
-    private void vector3$captureDepth(CallbackInfo ci, @Local Matrix4f projectionMatrix) {
-        ScreenVFXRenderer.captureDepth(projectionMatrix);
+    private void vector3$captureDepth(CallbackInfo ci, @Local Matrix4f projectionMatrix,
+                                      @Local CameraRenderState cameraState) {
+        ScreenVFXRenderer.captureDepth(projectionMatrix, cameraState.projectionMatrix);
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/FogRenderer;endFrame()V"))

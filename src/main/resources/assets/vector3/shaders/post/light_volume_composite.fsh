@@ -15,8 +15,8 @@ void main() {
     float closest = 1e30;
     vec3 color = vec3(0.0);
     vec3 nearestColor = vec3(0.0);
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
+    for (int y = -2; y <= 2; y++) {
+        for (int x = -2; x <= 2; x++) {
             ivec2 samplePixel = clamp(base + ivec2(x, y), ivec2(0), size - 1);
             vec2 sampleUv = (vec2(samplePixel) + 0.5) / vec2(size);
             float sampleDepth = texture(DistanceSampler, sampleUv).r;
@@ -27,7 +27,7 @@ void main() {
                 nearestColor = sampleColor;
             }
             vec2 delta = vec2(samplePixel) - pixel;
-            float spatial = exp(-0.5 * dot(delta, delta));
+            float spatial = exp(-0.25 * dot(delta, delta));
             float weight = spatial * exp(-difference / scale);
             color += sampleColor * weight;
             total += weight;

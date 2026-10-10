@@ -137,8 +137,12 @@ final class BlockAlbedoCapture {
         int y = Math.floorDiv((int) Math.floor(center.y), GRID) * GRID;
         int z = Math.floorDiv((int) Math.floor(center.z), GRID) * GRID;
         int hx = (int) Math.ceil(ex) + GRID, hy = (int) Math.ceil(ey) + GRID, hz = (int) Math.ceil(ez) + GRID;
-        long cells = (long) (hx * 2 + 1) * (hy * 2 + 1) * (hz * 2 + 1);
-        if (cells > MAX_CELLS) return null;
+        // A light too long for the budget keeps the part around it, where the albedo matters most.
+        while ((long) (hx * 2 + 1) * (hy * 2 + 1) * (hz * 2 + 1) > MAX_CELLS) {
+            hx = Math.max(GRID, hx * 9 / 10);
+            hy = Math.max(GRID, hy * 9 / 10);
+            hz = Math.max(GRID, hz * 9 / 10);
+        }
         return new Key(level, x - hx, y - hy, z - hz, x + hx, y + hy, z + hz);
     }
 

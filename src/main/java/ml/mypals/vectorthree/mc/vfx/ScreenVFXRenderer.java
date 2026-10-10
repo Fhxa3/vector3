@@ -61,11 +61,11 @@ public final class ScreenVFXRenderer {
     }
 
     /** Called before the hand pass, which clears the main depth buffer. */
-    public static void captureDepth(Matrix4fc projection) {
+    public static void captureDepth(Matrix4fc projection, Matrix4fc perspective) {
         if (Ports.view().mainViewDetached() || !LightRenderer.hasLights() && current.stream().noneMatch(ScreenVFXRenderer::usesDepth)) return;
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (LightRenderer.hasLights()) AlbedoCapture.render(main);
-        DepthOfFieldEffect.captureDepth(main, projection);
+        DepthOfFieldEffect.captureDepth(main, projection, perspective);
     }
 
     private static boolean usesDepth(ScreenVFX value) {

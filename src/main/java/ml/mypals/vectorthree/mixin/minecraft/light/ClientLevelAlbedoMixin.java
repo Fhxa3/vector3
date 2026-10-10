@@ -1,6 +1,7 @@
 package ml.mypals.vectorthree.mixin.minecraft.light;
 
 import ml.mypals.vectorthree.mc.light.AlbedoCapture;
+import ml.mypals.vectorthree.mc.light.VoxelWorld;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
@@ -18,13 +19,21 @@ public class ClientLevelAlbedoMixin {
         AlbedoCapture.blockChanged(pos);
     }
 
+    @Inject(method = "sendBlockUpdated", at = @At("RETURN"))
+    private void vector3$blockVoxelChanged(BlockPos pos, BlockState before, BlockState after, int flags,
+                                           CallbackInfo ci) {
+        VoxelWorld.blockChanged(pos, before, after);
+    }
+
     @Inject(method = "onChunkLoaded", at = @At("RETURN"))
     private void vector3$chunkAlbedoLoaded(ChunkPos pos, CallbackInfo ci) {
         AlbedoCapture.chunkChanged(pos.x(), pos.z());
+        VoxelWorld.columnChanged(pos.x(), pos.z());
     }
 
     @Inject(method = "unload", at = @At("RETURN"))
     private void vector3$chunkAlbedoUnloaded(LevelChunk chunk, CallbackInfo ci) {
         AlbedoCapture.chunkChanged(chunk.getPos().x(), chunk.getPos().z());
+        VoxelWorld.columnChanged(chunk.getPos().x(), chunk.getPos().z());
     }
 }
