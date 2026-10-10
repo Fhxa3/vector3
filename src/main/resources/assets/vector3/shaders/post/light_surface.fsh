@@ -15,6 +15,9 @@ layout(std140) uniform LightSettings {
     vec4 AreaCone;
     vec4 AreaRight;
     vec4 AreaUp;
+    vec4 WorldX;
+    vec4 WorldY;
+    vec4 WorldZ;
 };
 in vec2 texCoord;
 out vec4 fragColor;
@@ -23,6 +26,17 @@ vec3 viewPosition(vec2 uv, float depth) {
     vec4 point = InverseProjectionMatrix * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
     vec3 ray = point.xyz / point.w;
     return ray * (depth / -ray.z);
+}
+
+// Block faces are exactly axis aligned, so a normal that is nearly so is snapped onto the axis.
+vec3 snapToBlockAxes(vec3 n) {
+    float dx = dot(n, WorldX.xyz);
+    float dy = dot(n, WorldY.xyz);
+    float dz = dot(n, WorldZ.xyz);
+    if (abs(dx) > 0.985) return WorldX.xyz * sign(dx);
+    if (abs(dy) > 0.985) return WorldY.xyz * sign(dy);
+    if (abs(dz) > 0.985) return WorldZ.xyz * sign(dz);
+    return n;
 }
 
 vec3 surfaceNormal(vec3 surface, float depth) {
@@ -53,6 +67,7 @@ vec3 surfaceNormal(vec3 surface, float depth) {
     if (dot(normal, normal) < 1e-12) return facing;
     normal = normalize(normal);
     if (dot(normal, facing) < 0.0) normal = -normal;
+    normal = snapToBlockAxes(normal);
     float edge = max(min(el, er), min(ed, eu)) / max(depth, 0.25);
     float confidence = 1.0 - smoothstep(0.015, 0.08, edge);
     return normalize(mix(facing, normal, confidence));

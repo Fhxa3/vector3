@@ -12,11 +12,13 @@ import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.shaders.UniformType;
 import ml.mypals.vectorthree.core.light.Light;
+import ml.mypals.vectorthree.core.light.VoxelLayout;
 import ml.mypals.vectorthree.core.fade.effects.GodRaysSettings;
 import ml.mypals.vectorthree.mc.vfx.effects.DepthOfFieldEffect;
 import ml.mypals.vectorthree.mc.vfx.effects.ScreenPass;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
@@ -30,10 +32,10 @@ public final class LightRenderer {
     private static final List<Light> PENDING = new ArrayList<>();
     private static List<Light> current = List.of();
     private static Light previewOriginal, previewReplacement;
-    private static RenderPipeline surfacePipeline, surfaceCompositePipeline, shadowPipeline,
+    private static RenderPipeline surfacePipeline, surfaceCompositePipeline, shadowPipeline, shadowBlurPipeline,
             volumePipeline, volumeCompositePipeline;
-    private static GpuBuffer settings;
-    private static RenderTarget surfaceTarget, shadowTarget, volumeTarget;
+    private static GpuBuffer settings, blurAcross, blurDown;
+    private static RenderTarget surfaceTarget, shadowTarget, shadowBlurTarget, volumeTarget;
 
     private LightRenderer() {}
 
@@ -59,6 +61,7 @@ public final class LightRenderer {
     }
     public static void clear() {
         clearPreview();
+        VoxelWorld.clear();
         PENDING.clear();
         current = List.of();
         if (surfaceTarget != null) {
@@ -68,6 +71,10 @@ public final class LightRenderer {
         if (shadowTarget != null) {
             shadowTarget.destroyBuffers();
             shadowTarget = null;
+        }
+        if (shadowBlurTarget != null) {
+            shadowBlurTarget.destroyBuffers();
+            shadowBlurTarget = null;
         }
         if (volumeTarget != null) {
             volumeTarget.destroyBuffers();
@@ -100,28 +107,48 @@ public final class LightRenderer {
             RenderSystem.getDevice().createCommandEncoder().clearColorTexture(
                     volumeTarget.getColorTexture(), new Vector4f(0));
         }
+        boolean voxelReady = VoxelWorld.update(Minecraft.getInstance().level, camera.position(),
+                current.stream().map(LightRenderer::shown).filter(java.util.Objects::nonNull)
+                        .anyMatch(light -> light.intensity() > 0 && light.shadow() > 0),
+                camera.isDetached() ? null : camera.entity());
         Vector3f forward = new Vector3f(camera.forwardVector());
         Vector3f up = new Vector3f(camera.upVector());
         Vector3f right = new Vector3f(forward).cross(up).normalize();
+        // Camera-aligned view space (x right, y up, -z forward) of a world offset from the camera.
+        Matrix4f cameraView = new Matrix4f(
+                right.x, up.x, -forward.x, 0,
+                right.y, up.y, -forward.y, 0,
+                right.z, up.z, -forward.z, 0,
+                0, 0, 0, 1);
         for (Light requested : current) {
             Light light = shown(requested);
             if (light == null || light.intensity() <= 0 || light.radius() <= 0) continue;
             Vector3f offset = new Vector3f((float) (light.position().x - camera.position().x),
                     (float) (light.position().y - camera.position().y),
                     (float) (light.position().z - camera.position().z));
-            Matrix4fc projection = DepthOfFieldEffect.projectionMatrix();
-            Matrix4fc inverse = DepthOfFieldEffect.inverseProjectionMatrix();
+            Matrix4fc projection = DepthOfFieldEffect.perspectiveMatrix();
+            Matrix4fc inverse = DepthOfFieldEffect.inversePerspectiveMatrix();
             Vector3f direction = new Vector3f((float) light.direction().x,
                     (float) light.direction().y, (float) light.direction().z);
             Vector3f areaRight = new Vector3f(direction).cross(0, 1, 0);
             if (areaRight.lengthSquared() < 1e-6f) areaRight.set(1, 0, 0);
             areaRight.normalize();
             Vector3f areaUp = new Vector3f(areaRight).cross(direction).normalize();
+            // Everything is expressed in the bobbed view the frame was rendered in.
+            Matrix4f view = new Matrix4f(DepthOfFieldEffect.bobMatrix()).mul(cameraView);
+            Matrix4f worldOf = new Matrix4f(view).invert();
+            Vector3f viewPosition = view.transformPosition(new Vector3f(offset));
+            Vector3f viewDirection = view.transformDirection(new Vector3f(direction));
+            Vector3f viewRight = view.transformDirection(new Vector3f(areaRight));
+            Vector3f viewUp = view.transformDirection(new Vector3f(areaUp));
+            Vector3f origin = new Vector3f(VoxelWorld.originX(camera.position()),
+                    VoxelWorld.originY(camera.position()), VoxelWorld.originZ(camera.position()))
+                    .add(worldOf.m30(), worldOf.m31(), worldOf.m32());
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                var data = Std140Builder.onStack(stack, 256)
-                        .putVec4(offset.dot(right), offset.dot(up), -offset.dot(forward), light.radius())
+                var data = Std140Builder.onStack(stack, 384)
+                        .putVec4(viewPosition.x, viewPosition.y, viewPosition.z, light.radius())
                         .putVec4(light.red(), light.green(), light.blue(), light.intensity())
-                        .putVec4(DepthOfFieldEffect.projectionX(), DepthOfFieldEffect.projectionY(),
+                        .putVec4(DepthOfFieldEffect.perspectiveX(), DepthOfFieldEffect.perspectiveY(),
                                 1f / main.width, 1f / main.height)
                         .putVec4(light.volume(), light.shadow(), localRays == null ? 0 : localRays.intensity(),
                                 localRays == null ? 0 : localRays.samples())
@@ -133,15 +160,25 @@ public final class LightRenderer {
                         .putVec4(inverse.m10(), inverse.m11(), inverse.m12(), inverse.m13())
                         .putVec4(inverse.m20(), inverse.m21(), inverse.m22(), inverse.m23())
                         .putVec4(inverse.m30(), inverse.m31(), inverse.m32(), inverse.m33())
-                        .putVec4(direction.dot(right), direction.dot(up), -direction.dot(forward),
-                                light.type().ordinal())
+                        .putVec4(viewDirection.x, viewDirection.y, viewDirection.z, light.type().ordinal())
                         .putVec4(light.areaWidth(), light.areaHeight(),
                                 (float) Math.cos(Math.toRadians(light.innerAngle())),
                                 (float) Math.cos(Math.toRadians(light.outerAngle())))
-                        .putVec4(areaRight.dot(right), areaRight.dot(up), -areaRight.dot(forward), light.areaReach())
-                        .putVec4(areaUp.dot(right), areaUp.dot(up), -areaUp.dot(forward),
+                        .putVec4(viewRight.x, viewRight.y, viewRight.z, light.areaReach())
+                        .putVec4(viewUp.x, viewUp.y, viewUp.z,
                                 AlbedoCapture.ready()
-                                        ? (RenderSystem.getDevice().getDeviceInfo().isZZeroToOne() ? 2 : 1) : 0).get();
+                                        ? (RenderSystem.getDevice().getDeviceInfo().isZZeroToOne() ? 2 : 1) : 0)
+                        // The world's axes in view space, to snap surface normals onto block faces.
+                        .putVec4(worldOf.m00(), worldOf.m10(), worldOf.m20(), 0)
+                        .putVec4(worldOf.m01(), worldOf.m11(), worldOf.m21(), 0)
+                        .putVec4(worldOf.m02(), worldOf.m12(), worldOf.m22(), 0)
+                        // The voxel window: the camera inside it, its corner and wrap offsets, and its size.
+                        .putVec4(origin.x, origin.y, origin.z, voxelReady ? 1 : 0)
+                        .putIVec4(VoxelWorld.minX(), VoxelWorld.minY(), VoxelWorld.minZ(), 0)
+                        .putIVec4(Math.floorMod(VoxelWorld.minX(), VoxelLayout.GX),
+                                Math.floorMod(VoxelWorld.minY(), VoxelLayout.GY),
+                                Math.floorMod(VoxelWorld.minZ(), VoxelLayout.GZ), 0)
+                        .putIVec4(VoxelLayout.GX, VoxelLayout.GY, VoxelLayout.GZ, VoxelWorld.boxCount()).get();
                 RenderSystem.getDevice().createCommandEncoder().writeToBuffer(settings.slice(), data);
             }
             if (light.shadow() > 0) {
@@ -150,9 +187,14 @@ public final class LightRenderer {
                     pass.setPipeline(shadowPipeline);
                     RenderSystem.bindDefaultUniforms(pass);
                     pass.bindTexture("DistanceSampler", DepthOfFieldEffect.distanceView(), ScreenPass.nearest());
+                    pass.setUniform("VoxelTags", VoxelWorld.tags());
+                    pass.setUniform("VoxelBits", VoxelWorld.bits());
+                    pass.setUniform("VoxelBoxes", VoxelWorld.boxes());
                     pass.setUniform("LightSettings", settings);
                     pass.draw(3, 1, 0, 0);
                 }
+                blurShadow(shadowTarget, shadowBlurTarget, blurAcross);
+                blurShadow(shadowBlurTarget, shadowTarget, blurDown);
             }
             try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                     () -> "vector3_light_surface", surfaceTarget.getColorTextureView(), Optional.empty())) {
@@ -174,6 +216,9 @@ public final class LightRenderer {
                     pass.setPipeline(volumePipeline);
                     RenderSystem.bindDefaultUniforms(pass);
                     pass.bindTexture("DistanceSampler", DepthOfFieldEffect.distanceView(), ScreenPass.nearest());
+                    pass.setUniform("VoxelTags", VoxelWorld.tags());
+                    pass.setUniform("VoxelBits", VoxelWorld.bits());
+                    pass.setUniform("VoxelBoxes", VoxelWorld.boxes());
                     pass.setUniform("LightSettings", settings);
                     pass.draw(3, 1, 0, 0);
                 }
@@ -201,6 +246,26 @@ public final class LightRenderer {
         }
     }
 
+    // One axis of the depth-aware blur that turns the shadow pass's per-pixel samples into a soft shadow.
+    private static void blurShadow(RenderTarget from, RenderTarget to, GpuBuffer direction) {
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "vector3_light_shadow_blur", to.getColorTextureView(), Optional.empty())) {
+            pass.setPipeline(shadowBlurPipeline);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform("InSampler", from.getColorTextureView(), ScreenPass.nearest());
+            pass.setUniform("DistanceSampler", DepthOfFieldEffect.distanceView(), ScreenPass.nearest());
+            pass.setUniform("ShadowBlur", direction);
+            pass.draw(3, 1, 0, 0);
+        }
+    }
+
+    private static void writeDirection(GpuBuffer buffer, float x, float y) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            var data = Std140Builder.onStack(stack, 16).putVec4(x, y, 0, 0).get();
+            RenderSystem.getDevice().createCommandEncoder().writeToBuffer(buffer.slice(), data);
+        }
+    }
+
     private static void ensure() {
         if (surfacePipeline != null) return;
         BindGroupLayout surfaceLayout = BindGroupLayout.builder()
@@ -218,10 +283,25 @@ public final class LightRenderer {
                 GpuFormat.RGBA8_UNORM, null);
         shadowPipeline = ScreenPass.pipeline("light_shadow", BindGroupLayout.builder()
                 .withSampler("DistanceSampler")
+                .withUniform("VoxelTags", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBits", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBoxes", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_FLOAT)
                 .withUniform("LightSettings", UniformType.UNIFORM_BUFFER).build(),
                 GpuFormat.R16_FLOAT, null);
+        shadowBlurPipeline = ScreenPass.pipeline("light_shadow_blur", BindGroupLayout.builder()
+                .withSampler("InSampler")
+                .withSampler("DistanceSampler")
+                .withUniform("ShadowBlur", UniformType.UNIFORM_BUFFER).build(),
+                GpuFormat.R16_FLOAT, null);
+        blurAcross = RenderSystem.getDevice().createBuffer(() -> "vector3_light_shadow_blur_across",
+                GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 16);
+        blurDown = RenderSystem.getDevice().createBuffer(() -> "vector3_light_shadow_blur_down",
+                GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 16);
         volumePipeline = ScreenPass.pipeline("light_volume", BindGroupLayout.builder()
                 .withSampler("DistanceSampler")
+                .withUniform("VoxelTags", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBits", UniformType.TEXEL_BUFFER, GpuFormat.R32_UINT)
+                .withUniform("VoxelBoxes", UniformType.TEXEL_BUFFER, GpuFormat.RGBA32_FLOAT)
                 .withUniform("LightSettings", UniformType.UNIFORM_BUFFER).build(),
                 GpuFormat.RGBA16_FLOAT, BlendFunction.ADDITIVE);
         volumeCompositePipeline = ScreenPass.pipeline("light_volume_composite", BindGroupLayout.builder()
@@ -230,16 +310,20 @@ public final class LightRenderer {
                 .withSampler("DistanceSampler").build(),
                 GpuFormat.RGBA8_UNORM, null);
         settings = RenderSystem.getDevice().createBuffer(() -> "vector3_light_settings",
-                GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 256);
+                GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, 384);
     }
 
     private static void ensureShadow(RenderTarget main) {
         int width = Math.max(1, main.width / 2), height = Math.max(1, main.height / 2);
-        if (shadowTarget == null) {
+        if (shadowTarget == null || shadowBlurTarget == null) {
             shadowTarget = new TextureTarget("vector3_light_shadow", width, height, false, GpuFormat.R16_FLOAT);
+            shadowBlurTarget = new TextureTarget("vector3_light_shadow_blur", width, height, false, GpuFormat.R16_FLOAT);
         } else if (shadowTarget.width != width || shadowTarget.height != height) {
             shadowTarget.resize(width, height);
+            shadowBlurTarget.resize(width, height);
         }
+        writeDirection(blurAcross, 1f / width, 0);
+        writeDirection(blurDown, 0, 1f / height);
     }
 
     private static void ensureSurface(RenderTarget main) {

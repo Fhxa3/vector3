@@ -9,6 +9,7 @@ import ml.mypals.vectorthree.mc.render.KitFeatureDispatcher;
 import ml.mypals.vectorthree.mc.render.ScreenLayer;
 import ml.mypals.vectorthree.mc.shape.particle.ParticleEmitters;
 import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -38,8 +39,9 @@ public class GameRendererMixin {
     // Once the level is drawn, before the hand clears the depth.
     @Inject(method = "renderLevel", at = @At(value = "INVOKE", shift = At.Shift.AFTER,
             target = "Lnet/minecraft/client/renderer/LevelRenderer;render(Lcom/mojang/blaze3d/resource/GraphicsResourceAllocator;Lnet/minecraft/client/DeltaTracker;ZLnet/minecraft/client/renderer/state/level/CameraRenderState;Lorg/joml/Matrix4fc;Lcom/mojang/blaze3d/buffers/GpuBufferSlice;Lorg/joml/Vector4f;Z)V"))
-    private void vector3$captureDepth(CallbackInfo ci, @Local Matrix4f projectionMatrix) {
-        ScreenVFXRenderer.captureDepth(projectionMatrix);
+    private void vector3$captureDepth(CallbackInfo ci, @Local Matrix4f projectionMatrix,
+                                      @Local CameraRenderState cameraState) {
+        ScreenVFXRenderer.captureDepth(projectionMatrix, cameraState.projectionMatrix);
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/fog/FogRenderer;endFrame()V"))

@@ -49,6 +49,10 @@ public final class DepthOfFieldEffect {
     private static float focalScale = 1;
     private static float projectionX = 1, projectionY = 1;
     private static final Matrix4f projectionMatrix = new Matrix4f(), inverseProjectionMatrix = new Matrix4f();
+    // View bobbing and the hurt tilt are folded into the level's projection matrix, so the plain perspective and
+    // the camera-to-bobbed-view transform are kept apart: the depth buffer only follows the bobbed view's z.
+    private static final Matrix4f perspectiveMatrix = new Matrix4f(), inversePerspectiveMatrix = new Matrix4f(),
+            bobMatrix = new Matrix4f();
     private static int frame;
 
     /** Smoothed centre distance, one per view so the camera preview does not disturb the main view. */
@@ -61,7 +65,7 @@ public final class DepthOfFieldEffect {
 
     private DepthOfFieldEffect() {}
 
-    public static void captureDepth(RenderTarget main, Matrix4fc projection) {
+    public static void captureDepth(RenderTarget main, Matrix4fc projection, Matrix4fc perspective) {
         if (main.getDepthTextureView() == null || main.width <= 0 || main.height <= 0) return;
         ensure(main);
         focalScale = Math.abs(projection.m11());
@@ -69,9 +73,12 @@ public final class DepthOfFieldEffect {
         projectionY = projection.m11();
         projectionMatrix.set(projection);
         inverseProjectionMatrix.set(projection).invert();
+        perspectiveMatrix.set(perspective);
+        inversePerspectiveMatrix.set(perspective).invert();
+        bobMatrix.set(inversePerspectiveMatrix).mul(projection);
         boolean zeroToOne = RenderSystem.getDevice().getDeviceInfo().isZZeroToOne();
-        write(projectionSettings, projection.m22(), projection.m32(), projection.m23(), projection.m33(),
-                zeroToOne ? 1 : 0, skyDepth(projection, zeroToOne), 0, 0);
+        write(projectionSettings, perspective.m22(), perspective.m32(), perspective.m23(), perspective.m33(),
+                zeroToOne ? 1 : 0, skyDepth(perspective, zeroToOne), 0, 0);
         try (RenderPass pass = begin("depth", distance.getColorTextureView(), depthPipeline)) {
             pass.bindTexture("DepthSampler", main.getDepthTextureView(), ScreenPass.nearest());
             pass.setUniform("DOFProjection", projectionSettings);
@@ -102,6 +109,13 @@ public final class DepthOfFieldEffect {
     public static float projectionY() { return projectionY; }
     public static Matrix4fc projectionMatrix() { return projectionMatrix; }
     public static Matrix4fc inverseProjectionMatrix() { return inverseProjectionMatrix; }
+    /** The plain perspective projection, without view bobbing; the captured distances are in its view space. */
+    public static Matrix4fc perspectiveMatrix() { return perspectiveMatrix; }
+    public static Matrix4fc inversePerspectiveMatrix() { return inversePerspectiveMatrix; }
+    /** Maps camera-aligned view space to the bobbed view space the frame was rendered in. */
+    public static Matrix4fc bobMatrix() { return bobMatrix; }
+    public static float perspectiveX() { return perspectiveMatrix.m00(); }
+    public static float perspectiveY() { return perspectiveMatrix.m11(); }
 
     public static void render(RenderTarget main, ScreenVFX value, boolean overlay) {
         if (!depthReady || distance.width != main.width || distance.height != main.height) return;
