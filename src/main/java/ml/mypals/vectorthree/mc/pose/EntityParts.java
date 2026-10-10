@@ -5,7 +5,6 @@ import com.mojang.math.Axis;
 import ml.mypals.vectorthree.mixin.minecraft.pose.LivingEntityRendererInvoker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.Model;
-import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.entity.EnderDragonRenderer;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.LivingEntityRenderer;
@@ -19,7 +18,6 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -35,7 +33,7 @@ public final class EntityParts {
 
     /** The part names of the entity's model, root first, or empty when it has no posable model. */
     public static List<String> names(@Nullable Entity entity) {
-        return new ArrayList<>(EntityPoses.restPose(entity).keySet());
+        return EntityPoses.tree(entity).names();
     }
 
     /**
@@ -46,6 +44,15 @@ public final class EntityParts {
     public static @Nullable Matrix4f transform(Entity entity, String part, float partialTick) {
         EntityRenderer renderer = Minecraft.getInstance().getEntityRenderDispatcher().getRenderer(entity);
         PoseStack stack = new PoseStack();
+        // A rig set up when it is drawn (GeckoLib's bones) is where the entity last drew it, with no flipped model space.
+        PartRig drawn = EntityPoses.drawnRig(entity.getUUID());
+        Matrix4f drawnMatrix = EntityPoses.seenMatrix(entity.getUUID());
+        if (drawn != null && drawnMatrix != null) {
+            if (!drawn.tree().contains(part)) return null;
+            stack.last().pose().set(drawnMatrix);
+            drawn.transform(part, stack, true);
+            return world(entity, stack, partialTick);
+        }
         Model model;
         Object state;
         if (renderer instanceof LivingEntityRenderer living && entity instanceof LivingEntity) {
@@ -79,17 +86,17 @@ public final class EntityParts {
             state = renderer.createRenderState(entity, partialTick);
             stack.last().pose().set(matrix);
         }
-        EntityPoses.Tree tree = EntityPoses.parts(model);
-        ModelPart target = tree.byName().get(part);
-        if (target == null) return null;
+        PartRig rig = EntityPoses.rig(model);
+        if (!rig.tree().contains(part)) return null;
         model.setupAnim(state);
-        EntityPoses.afterSetupAnim(model, state, false);
+        EntityPoses.afterSetupAnim(rig, state, false);
 
-        List<ModelPart> chain = new ArrayList<>();
-        for (ModelPart at = target; at != null; at = tree.parents().get(at)) chain.addFirst(at);
-        for (ModelPart at : chain) at.translateAndRotate(stack);
+        rig.transform(part, stack, true);
         stack.scale(-1, -1, 1);
+        return world(entity, stack, partialTick);
+    }
 
+    private static Matrix4f world(Entity entity, PoseStack stack, float partialTick) {
         Matrix4f local = stack.last().pose();
         Vector3f pivot = local.transformPosition(new Vector3f());
         Quaternionf rotation = local.getNormalizedRotation(new Quaternionf());

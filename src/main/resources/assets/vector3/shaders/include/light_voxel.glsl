@@ -102,3 +102,78 @@ bool voxelEntityBlocked(vec3 origin, vec3 target) {
     }
     return false;
 }
+
+// The visibility map of a light: for every direction (octahedral layout) the distance to the first occluder,
+// where the first see-through block starts and how much light is left after the ones before the occluder.
+const int MAP_SIZE = 256;
+
+vec3 octDecode(vec2 e) {
+    e = e * 2.0 - 1.0;
+    vec3 v = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (v.z < 0.0) v.xy = (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(v);
+}
+
+vec2 octEncode(vec3 n) {
+    n /= abs(n.x) + abs(n.y) + abs(n.z);
+    if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return n.xy * 0.5 + 0.5;
+}
+
+// Distance along the ray to the first opaque block, or `range` when there is none. The first half block is
+// skipped so a light set into a block is not shut in by it.
+float voxelDistance(vec3 origin, vec3 direction, float range, out float glassStart, out float glassTransmit) {
+    glassStart = range;
+    glassTransmit = 1.0;
+    vec3 safe = direction + vec3(lessThan(abs(direction), vec3(1e-6))) * 1e-6;
+    vec3 inverse_ = 1.0 / safe;
+    vec3 forward = step(0.0, safe);
+    vec3 limit = vec3(VoxelDims.xyz) * 16.0;
+    float t = 0.5;
+    for (int i = 0; i < 192; i++) {
+        if (t >= range) return range;
+        vec3 p = origin + direction * t;
+        if (any(lessThan(p, vec3(0.0))) || any(greaterThanEqual(p, limit))) return range;
+        ivec3 cell = ivec3(floor(p));
+        ivec3 rel = cell / 16;
+        int slot;
+        uint flags = voxelSection(rel, slot);
+        vec3 base;
+        float size;
+        if ((flags & 2u) != 0u) {
+            int content = voxelCell(slot, cell - rel * 16, (flags & 4u) != 0u);
+            if (content == 2) return t;
+            if (content == 1) {
+                if (glassTransmit >= 1.0) glassStart = t;
+                glassTransmit *= GLASS_PASS;
+                if (glassTransmit < 0.03) return t;
+            }
+            base = vec3(cell);
+            size = 1.0;
+        } else {
+            base = vec3(rel * 16);
+            size = 16.0;
+        }
+        vec3 exits = (base + forward * size - origin) * inverse_;
+        t = min(min(exits.x, exits.y), exits.z) + 1e-3;
+    }
+    return range;
+}
+
+// Distance to the nearest entity box on the ray; boxes that hold the origin (a light carried by an entity) are skipped.
+float voxelEntityDistance(vec3 origin, vec3 direction, float range) {
+    vec3 safe = direction + vec3(lessThan(abs(direction), vec3(1e-6))) * 1e-6;
+    vec3 inverse_ = 1.0 / safe;
+    float nearest = range;
+    for (int i = 0; i < VoxelDims.w; i++) {
+        vec3 low = texelFetch(VoxelBoxes, i * 2).xyz;
+        vec3 high = texelFetch(VoxelBoxes, i * 2 + 1).xyz;
+        if (all(greaterThan(origin, low)) && all(lessThan(origin, high))) continue;
+        vec3 a = (low - origin) * inverse_;
+        vec3 b = (high - origin) * inverse_;
+        float enter = max(max(min(a.x, b.x), min(a.y, b.y)), min(a.z, b.z));
+        float leave = min(min(max(a.x, b.x), max(a.y, b.y)), max(a.z, b.z));
+        if (leave >= max(enter, 0.0)) nearest = min(nearest, max(enter, 0.0));
+    }
+    return nearest;
+}

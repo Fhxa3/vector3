@@ -1,5 +1,6 @@
 package ml.mypals.vectorthree.mc;
 
+import ml.mypals.vectorthree.mc.compat.GeckoLibCompat;
 import ml.mypals.vectorthree.mc.compat.IrisCompat;
 import ml.mypals.vectorthree.mc.vfx.ScreenVFXRenderer;
 import ml.mypals.vectorthree.mc.pose.EntityPoses;
@@ -15,6 +16,7 @@ public final class MinecraftBootstrap {
         FontOptions.ensureFontFolder();
         ShapeTrackRegistry.registerDefaults();
         IrisCompat.registerObjPbr();
+        GeckoLibCompat.register();
     }
 
     public static void onDisconnect() {

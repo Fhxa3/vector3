@@ -20,6 +20,7 @@ layout(std140) uniform LightSettings {
     ivec4 VoxelDims;
 };
 #moj_import <vector3:light_voxel.glsl>
+uniform sampler2D VisibilitySampler;
 in vec2 texCoord;
 out vec4 fragColor;
 
@@ -73,6 +74,25 @@ bool areaInterval(vec3 ray, vec3 center, float radius, out float start, out floa
         }
     }
     return end > start;
+}
+
+// How much of the light reaches a point, from the light's visibility map; the four nearest directions are blended.
+float mapVisibility(vec3 point, vec3 lightWindow) {
+    vec3 offset = voxelFromView(point) - lightWindow;
+    float reach = length(offset);
+    if (reach < 1e-3) return 1.0;
+    vec2 texel = octEncode(offset / reach) * float(MAP_SIZE) - 0.5;
+    ivec2 base = ivec2(floor(texel));
+    vec2 fraction = texel - vec2(base);
+    float total = 0.0;
+    for (int y = 0; y < 2; y++) {
+        for (int x = 0; x < 2; x++) {
+            vec4 entry = texelFetch(VisibilitySampler, clamp(base + ivec2(x, y), ivec2(0), ivec2(MAP_SIZE - 1)), 0);
+            float visible = reach < entry.x ? (reach < entry.y ? 1.0 : entry.z) : 0.0;
+            total += visible * (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
+        }
+    }
+    return total;
 }
 
 float screenOcclusion(vec3 point, vec3 emitter, float phase) {
@@ -156,12 +176,14 @@ void main() {
     // and aims them at a different point of the light, so the silhouettes of the occluders at the different
     // depths do not line up into visible layers but average out into one smooth shadow.
     vec3 pixelBase = vec3(pixelNoise(vec2(0.0)), pixelNoise(vec2(37.0, 11.0)), pixelNoise(vec2(5.0, 71.0)));
+    bool useMap = VoxelMin.w > 0 && Effects.y > 0.001;
+    vec3 lightWindow = voxelFromView(center);
     float occlusionAnchors[ANCHORS];
     float softness = LightDirectionType.w > 1.5 ? clamp(radius * 0.02, 0.025, 0.18)
             : clamp(radius * 0.04, 0.06, 0.4);
     for (int anchor = 0; anchor < ANCHORS; anchor++) {
         occlusionAnchors[anchor] = 0.0;
-        if (Effects.y <= 0.001) continue;
+        if (Effects.y <= 0.001 || useMap) continue;
         float seed = float(anchor);
         // Neighbouring pixels get evenly spread values, shifted along a golden-ratio sequence for each ray, so the
         // blur that follows averages them into a smooth shadow instead of leaving random grain.
@@ -242,8 +264,8 @@ void main() {
         float fraction = clamp((distanceAlong - start) / max(end - start, 1e-4), 0.0, 1.0);
         float anchorPosition = clamp(fraction * float(ANCHORS) - 0.5, 0.0, float(ANCHORS - 1));
         int anchor = min(int(floor(anchorPosition)), ANCHORS - 2);
-        float occlusion = mix(occlusionAnchors[anchor], occlusionAnchors[anchor + 1],
-                anchorPosition - float(anchor));
+        float occlusion = useMap ? 1.0 - mapVisibility(point, lightWindow)
+                : mix(occlusionAnchors[anchor], occlusionAnchors[anchor + 1], anchorPosition - float(anchor));
         float visibility = 1.0 - Effects.y * occlusion;
         scattering += radial * radial * shape * variation * visibility * piece;
     }
