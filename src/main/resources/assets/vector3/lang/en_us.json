@@ -683,6 +683,8 @@
   "vector3.entity_pose.capture.tooltip": "Copies the entity's pose as it is animated right now into this keyframe, for every part.",
   "vector3.entity_pose.not_loaded": "The entity isn't loaded at the playhead.",
   "vector3.entity_pose.no_parts": "Pick a loaded entity to list its model parts.",
+  "vector3.entity_pose.joints": "Joint parts",
+  "vector3.entity_pose.joints.tooltip": "Parts the model lists side by side but that are joined (a dragon's neck and tail, a player's limbs and head, a hat and its head) move along with the part they hang from.",
   "vector3.entity_pose.unmatched": "Parts not in this model",
   "vector3.entity_pose.filter": "Filter parts",
   "vector3.entity_pose.edited_only": "Edited only",

@@ -97,6 +97,43 @@ public final class PartTree {
         }
     }
 
+    /**
+     * The same parts under the same names with some hung from other parts: {@code parents} maps a part to its new
+     * parent. A link that would make a part its own ancestor, or names a part this tree does not have, is left out.
+     */
+    public PartTree withParents(Map<String, String> parents) {
+        Map<String, String> parentOf = new LinkedHashMap<>();
+        for (String name : order) parentOf.put(name, nodes.get(name).parent());
+        for (Map.Entry<String, String> link : parents.entrySet()) {
+            String child = link.getKey(), parent = link.getValue();
+            if (!nodes.containsKey(child) || !nodes.containsKey(parent) || child.equals(parent)) continue;
+            String before = parentOf.put(child, parent);
+            boolean cycle = false;
+            for (String at = parent; at != null && !cycle; at = parentOf.get(at)) cycle = at.equals(child);
+            if (cycle) parentOf.put(child, before);
+        }
+        Map<String, List<String>> kids = new LinkedHashMap<>();
+        List<String> top = new ArrayList<>();
+        for (String name : order) kids.put(name, new ArrayList<>());
+        for (String name : order) {
+            String parent = parentOf.get(name);
+            if (parent == null) top.add(name);
+            else kids.get(parent).add(name);
+        }
+        Map<String, Node> next = new LinkedHashMap<>();
+        for (String root : top) place(root, null, 0, kids, next);
+        int[] inputs = new int[inputToOrder.length];
+        List<String> nextOrder = new ArrayList<>(next.keySet());
+        for (int i = 0; i < inputs.length; i++) inputs[i] = nextOrder.indexOf(order.get(inputToOrder[i]));
+        return new PartTree(next, inputs, List.copyOf(top));
+    }
+
+    private void place(String name, @Nullable String parent, int depth, Map<String, List<String>> kids, Map<String, Node> out) {
+        List<String> children = new ArrayList<>(kids.get(name));
+        out.put(name, new Node(nodes.get(name).raw(), parent, children, depth));
+        for (String child : children) place(child, name, depth + 1, kids, out);
+    }
+
     /** Every part, parents before their children, siblings in the order they were added. */
     public List<String> names() {
         return order;

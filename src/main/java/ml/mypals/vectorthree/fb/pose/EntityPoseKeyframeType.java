@@ -33,9 +33,9 @@ public final class EntityPoseKeyframeType extends CustomKeyframeType<EntityPose>
 
     @Override public String icon() { return VectorIcons.icon(VectorIcons.POSE_TRACK, null); }
 
-    @Override protected EntityPose createValue() { return new EntityPose(null, EntityPose.Mode.ABSOLUTE, Map.of()); }
+    @Override protected EntityPose createValue() { return new EntityPose(null, EntityPose.Mode.ABSOLUTE, Map.of(), true); }
 
-    @Override protected EntityPose sanitize(EntityPose value) { return new EntityPose(value.entity(), value.mode(), value.parts()); }
+    @Override protected EntityPose sanitize(EntityPose value) { return new EntityPose(value.entity(), value.mode(), value.parts(), value.joints()); }
 
     @Override protected EntityPose lerp(EntityPose from, EntityPose to, double amount) { return from.lerp(to, (float) amount); }
 
@@ -51,6 +51,8 @@ public final class EntityPoseKeyframeType extends CustomKeyframeType<EntityPose>
         ImInt mode = new ImInt(edited.mode().ordinal());
         if (ImGui.combo(I18n.get("vector3.entity_pose.mode"), mode, modes)) edited = edited.withMode(EntityPose.Mode.values()[mode.get()]);
         if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("vector3.entity_pose.mode.tooltip"));
+        if (ImGui.checkbox(I18n.get("vector3.entity_pose.joints"), edited.joints())) edited = edited.withJoints(!edited.joints());
+        if (ImGui.isItemHovered()) ImGui.setTooltip(I18n.get("vector3.entity_pose.joints.tooltip"));
         if (edited.entity() == null) return edited;
 
         TexturedObjShape obj = ShapeEntities.objShape(edited.entity());
@@ -76,7 +78,7 @@ public final class EntityPoseKeyframeType extends CustomKeyframeType<EntityPose>
             }
         }
 
-        PartTree tree = obj != null ? obj.partTree() : EntityPoses.tree(entity);
+        PartTree tree = obj != null ? obj.partTree() : EntityPoses.tree(entity, edited.joints());
         if (tree.size() == 0 && edited.parts().isEmpty()) {
             ImGui.textDisabled(I18n.get("vector3.entity_pose.no_parts"));
             return edited;

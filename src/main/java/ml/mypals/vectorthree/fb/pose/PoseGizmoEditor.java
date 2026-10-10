@@ -32,9 +32,9 @@ import java.util.function.Consumer;
 
 /**
  * Viewport gizmo for an Entity Pose keyframe: a marker on every part's pivot (right-click one to pick it) and, on the
- * picked part, one ring per rotation and one arrow per offset axis (R / G pick which). Each ring turns exactly one of
- * the part's X / Y / Z angles, about the axis that angle really turns about, so keyframes keep blending angle by angle.
- * Right-drag a handle; Ctrl snaps.
+ * picked part, one ring per rotation and one arrow per offset axis (R / G pick which). The three rings stand square to
+ * each other, along the axes of the part's parent; a ring turns the part about its axis, and the part's X / Y / Z angles
+ * are worked out from that. Right-drag a handle; Ctrl snaps.
  * <p>
  * The part frames come from the renderer (see EntityPoses#modelSubmitted), which reports them for the selected
  * entity each frame.
@@ -71,6 +71,7 @@ public final class PoseGizmoEditor {
     private Vec3 dragPivot;
     private Vec3 dragAxis;
     private boolean dragMirrored;
+    private EntityPoses.Frame dragFrame;
     private Vec3 dragFrom;
     private double dragParameter;
     private double dragUnit;
@@ -319,6 +320,7 @@ public final class PoseGizmoEditor {
         }
         dragStart = enabledPart(keyframe.value, frame);
         dragPivot = frame.pivot();
+        dragFrame = frame;
         dragAxis = axis(frame, ring.axis());
         dragMirrored = frame.mirrored();
         Vec3 point = ShapeGizmoEditor.intersectPlane(ray, dragPivot, dragAxis);
@@ -371,20 +373,34 @@ public final class PoseGizmoEditor {
         double turned = Math.toDegrees(Math.atan2(dragFrom.cross(to).dot(dragAxis), dragFrom.dot(to)));
         if (dragMirrored) turned = -turned;
         EntityPose.Limb limb = dragStart.parts().get(part);
-        float start = switch (dragging.axis()) {
-            case X -> limb.xRot();
-            case Y -> limb.yRot();
-            case Z -> limb.zRot();
+        if (InputHelper.isCtrlDownRaw()) turned = Math.round(turned / ShapeGizmoEditor.ANGLE_STEP) * ShapeGizmoEditor.ANGLE_STEP;
+        return dragStart.withPart(part, turn(limb, dragFrame, dragging.axis(), turned));
+    }
+
+    /**
+     * The limb after the part turns {@code degrees} about one of its parent's axes. The part's own angles are Euler
+     * angles, so they are worked out from the turned rotation (taking the equivalent angles nearest where they were); a
+     * joint's carry is taken off and put back, as the turn is of the part as drawn.
+     */
+    private static EntityPose.Limb turn(EntityPose.Limb limb, EntityPoses.Frame frame, Axis axis, double degrees) {
+        float x = frame.xRot() + frame.baseXRot(), y = frame.yRot() + frame.baseYRot(), z = frame.zRot() + frame.baseZRot();
+        Quaternionf own = new Quaternionf().rotationZYX((float) Math.toRadians(z), (float) Math.toRadians(y), (float) Math.toRadians(x));
+        Vector3f unit = switch (axis) {
+            case X -> new Vector3f(1, 0, 0);
+            case Y -> new Vector3f(0, 1, 0);
+            case Z -> new Vector3f(0, 0, 1);
         };
-        double value = start + turned;
-        if (InputHelper.isCtrlDownRaw()) value = ShapeGizmoEditor.snap(value, start, ShapeGizmoEditor.ANGLE_STEP, false);
-        float angle = (float) value;
-        EntityPose.Limb turnedLimb = switch (dragging.axis()) {
-            case X -> limb.withRotation(angle, limb.yRot(), limb.zRot());
-            case Y -> limb.withRotation(limb.xRot(), angle, limb.zRot());
-            case Z -> limb.withRotation(limb.xRot(), limb.yRot(), angle);
-        };
-        return dragStart.withPart(part, turnedLimb);
+        Quaternionf turned = new Quaternionf().rotationAxis((float) Math.toRadians(degrees), unit);
+        Quaternionf result = new Quaternionf(frame.carry()).conjugate().mul(turned).mul(frame.carry()).mul(own);
+        Vector3f angles = result.getEulerAnglesZYX(new Vector3f());
+        float nx = nearest((float) Math.toDegrees(angles.x), x), ny = nearest((float) Math.toDegrees(angles.y), y),
+                nz = nearest((float) Math.toDegrees(angles.z), z);
+        return limb.withRotation(limb.xRot() + nx - x, limb.yRot() + ny - y, limb.zRot() + nz - z);
+    }
+
+    // The angle equal to {@code angle} that is nearest {@code reference}.
+    private static float nearest(float angle, float reference) {
+        return reference + net.minecraft.util.Mth.wrapDegrees(angle - reference);
     }
 
     private static Vector3f eulerDegrees(Quaternionf rotation) {
@@ -416,14 +432,8 @@ public final class PoseGizmoEditor {
                 show(start.withPart(part, limb.withOffset(x, y, z)));
             } else {
                 EntityPose start = enabledPart(keyframe.value, frame);
-                EntityPose.Limb limb = start.parts().get(part);
-                float x = limb.xRot(), y = limb.yRot(), z = limb.zRot();
-                switch (axis) {
-                    case X -> x += (float) value;
-                    case Y -> y += (float) value;
-                    default -> z += (float) value;
-                }
-                show(start.withPart(part, limb.withRotation(x, y, z)));
+                Axis turned = axis == GizmoTypedInput.Axis.X ? Axis.X : axis == GizmoTypedInput.Axis.Y ? Axis.Y : Axis.Z;
+                show(start.withPart(part, turn(start.parts().get(part), frame, turned, value)));
             }
         }
 
