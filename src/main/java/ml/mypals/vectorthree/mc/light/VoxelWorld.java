@@ -1,7 +1,7 @@
 package ml.mypals.vectorthree.mc.light;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.blaze3d.buffers.GpuBuffer;
 import ml.mypals.vectorthree.core.light.VoxelLayout;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;

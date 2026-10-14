@@ -1,12 +1,11 @@
 #version 330
-#extension GL_ARB_separate_shader_objects : require
 uniform sampler2D InSampler;
 uniform sampler2D DistanceSampler;
 layout(std140) uniform ShadowBlur {
     vec4 Direction; // uv step of one shadow texel along the blur axis
 };
-layout(location = 0) in vec2 texCoord;
-layout(location = 0) out vec4 fragColor;
+in vec2 texCoord;
+out vec4 fragColor;
 
 bool usable(float z) {
     return z > 0.01 && z < 50000.0;
